@@ -11,118 +11,135 @@ const ADMIN_PASSWORD = "chessadmin";
 
 let players = [];
 let settings = {};
-let matches = [];          // from bin
-let schedule = [];         // generated full schedule (matches with result=null if not played)
+let pairings = [];       // source of truth from bin: array of match objects
+let isAdmin = false;
 let currentTab = "standings";
 let sortCol = "score";
-let sortDir = -1;          // -1 desc
-let isAdmin = false;
+let sortDir = -1;
 
 // ---------- Utils ----------
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
 function uid() {
-  return "m" + Math.random().toString(36).slice(2, 10);
+  return "m" + Math.random().toString(36).slice(2, 11);
 }
 
 function expectedScore(ra, rb) {
   return 1 / (1 + Math.pow(10, (rb - ra) / 400));
 }
 
-function computeElo(playersMap, orderedMatches) {
-  // playersMap: id -> {elo, ...}
-  const elos = {};
-  players.forEach(p => elos[p.id] = settings.initialElo);
-
-  orderedMatches.forEach(m => {
-    if (!m.result) return;
-    const ra = elos[m.white];
-    const rb = elos[m.black];
-    const ea = expectedScore(ra, rb);
-    const eb = 1 - ea;
-    let sa = 0.5, sb = 0.5;
-    if (m.result === "1-0") { sa = 1; sb = 0; }
-    else if (m.result === "0-1") { sa = 0; sb = 1; }
-    const k = settings.kFactor;
-    elos[m.white] = Math.round(ra + k * (sa - ea));
-    elos[m.black] = Math.round(rb + k * (sb - eb));
-  });
-  return elos;
+// Normalize pair key so order doesn't matter
+function pairKey(id1, id2) {
+  return [id1, id2].sort().join("|");
 }
 
-// ---------- Double Round-Robin Generator (Berger / Circle method) ----------
-function generateDoubleRoundRobin(playerIds) {
-  const n = playerIds.length;
-  if (n % 2 !== 0) {
-    // For odd we would add a bye; here we assume even
-    console.warn("Odd number of players – bye support not fully implemented");
-  }
-  const rounds = [];
-  // Create list: fix first player, rotate the rest
-  let arr = [...playerIds];
-  const half = n / 2;
-  const totalRoundsPerCycle = n - 1;
-
-  // First cycle
-  for (let r = 0; r < totalRoundsPerCycle; r++) {
-    const pairings = [];
-    for (let i = 0; i < half; i++) {
-      const a = arr[i];
-      const b = arr[n - 1 - i];
-      // Color: alternate based on round and position for balance
-      // Simple rule: for first cycle, lower index white on even boards in even rounds etc.
-      // Better: standard Berger colors
-      let white, black;
-      if (r % 2 === 0) {
-        white = a; black = b;
-      } else {
-        white = b; black = a;
-      }
-      // Special for fixed player color flip every round
-      if (i === 0 && r % 2 === 1) {
-        white = a; black = b;
-      }
-      pairings.push({
+// ---------- Generate all unique pairings (handles odd/even perfectly) ----------
+function generateAllPairings(playerIds) {
+  const result = [];
+  for (let i = 0; i < playerIds.length; i++) {
+    for (let j = i + 1; j < playerIds.length; j++) {
+      const a = playerIds[i];
+      const b = playerIds[j];
+      result.push({
         id: uid(),
-        round: r + 1,
-        cycle: 1,
-        board: i + 1,
-        white,
-        black,
-        result: null,
-        playedDate: null
+        playerA: a,
+        playerB: b,
+        // Two games / sets: colors swapped
+        games: [
+          { white: a, black: b, result: null, playedDate: null },
+          { white: b, black: a, result: null, playedDate: null }
+        ]
       });
     }
-    rounds.push(pairings);
-    // Rotate: keep arr[0] fixed, rotate others clockwise
-    const fixed = arr[0];
-    const rest = arr.slice(1);
-    rest.unshift(rest.pop());
-    arr = [fixed, ...rest];
   }
+  return result;
+}
 
-  // Second cycle: reverse colors, rounds continue
-  const second = [];
-  for (let r = 0; r < totalRoundsPerCycle; r++) {
-    const pairings = rounds[r].map(p => ({
-      id: uid(),
-      round: totalRoundsPerCycle + r + 1,
-      cycle: 2,
-      board: p.board,
-      white: p.black,   // reverse colors
-      black: p.white,
-      result: null,
-      playedDate: null
-    }));
-    second.push(pairings);
-  }
+// ---------- Elo + Stats ----------
+function computeEloAndStats() {
+  // Flatten completed games in storage order
+  const orderedGames = [];
+  pairings.forEach(p => {
+    p.games.forEach(g => {
+      if (g.result) {
+        orderedGames.push({
+          white: g.white,
+          black: g.black,
+          result: g.result
+        });
+      }
+    });
+  });
 
-  // Flatten
-  const all = [];
-  rounds.forEach(rr => all.push(...rr));
-  second.forEach(rr => all.push(...rr));
-  return all;
+  const elos = {};
+  players.forEach(p => elos[p.id] = settings.initialElo || 1200);
+
+  orderedGames.forEach(g => {
+    const ra = elos[g.white];
+    const rb = elos[g.black];
+    const ea = expectedScore(ra, rb);
+    let sa = 0.5;
+    if (g.result === "1-0") sa = 1;
+    else if (g.result === "0-1") sa = 0;
+    const k = settings.kFactor || 32;
+    elos[g.white] = Math.round(ra + k * (sa - ea));
+    elos[g.black] = Math.round(rb + k * ((1 - sa) - (1 - ea)));
+  });
+
+  const stats = {};
+  players.forEach(p => {
+    stats[p.id] = {
+      id: p.id,
+      name: p.name,
+      games: 0,
+      matches: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      score: 0,
+      elo: elos[p.id],
+      delta: elos[p.id] - (settings.initialElo || 1200),
+      opponents: new Set(),
+      buchholz: 0
+    };
+  });
+
+  pairings.forEach(p => {
+    let matchHasResult = false;
+    p.games.forEach(g => {
+      if (!g.result) return;
+      matchHasResult = true;
+      const w = stats[g.white];
+      const b = stats[g.black];
+      if (!w || !b) return;
+      w.games++; b.games++;
+      w.opponents.add(g.black);
+      b.opponents.add(g.white);
+
+      if (g.result === "1-0") {
+        w.wins++; w.score += 1;
+        b.losses++;
+      } else if (g.result === "0-1") {
+        b.wins++; b.score += 1;
+        w.losses++;
+      } else {
+        w.draws++; b.draws++;
+        w.score += 0.5; b.score += 0.5;
+      }
+    });
+    if (matchHasResult) {
+      if (stats[p.playerA]) stats[p.playerA].matches++;
+      if (stats[p.playerB]) stats[p.playerB].matches++;
+    }
+  });
+
+  Object.values(stats).forEach(s => {
+    s.opponents = Array.from(s.opponents);
+    s.buchholz = s.opponents.reduce((sum, oid) => sum + (stats[oid]?.score || 0), 0);
+  });
+
+  return { stats, elos };
 }
 
 // ---------- Data Loading ----------
@@ -131,16 +148,14 @@ async function loadLocalData() {
     fetch("data/players.json"),
     fetch("data/settings.json")
   ]);
-  const pData = await pRes.json();
-  const sData = await sRes.json();
-  players = pData.players;
-  settings = sData;
+  players = (await pRes.json()).players;
+  settings = await sRes.json();
 }
 
-async function loadMatches() {
+async function loadPairings() {
   if (JSONBIN_BIN_ID === "YOUR_BIN_ID_HERE") {
-    console.warn("jsonbin not configured – using empty matches");
-    matches = [];
+    console.warn("jsonbin not configured – starting empty");
+    pairings = [];
     return;
   }
   try {
@@ -152,17 +167,18 @@ async function loadMatches() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    matches = data.record?.matches || data.matches || [];
+    const record = data.record || data;
+    pairings = record.pairings || record.matches || [];
   } catch (e) {
-    console.error("Failed to load matches:", e);
-    matches = [];
-    showStatus("Could not load matches from jsonbin. Using empty schedule.", "err");
+    console.error("Failed to load:", e);
+    pairings = [];
+    showStatus("Could not load from jsonbin. Starting empty.", "err");
   }
 }
 
-async function saveMatches() {
+async function savePairings() {
   if (JSONBIN_BIN_ID === "YOUR_BIN_ID_HERE") {
-    showStatus("jsonbin not configured. Changes are local only (refresh loses them).", "info");
+    showStatus("jsonbin not configured. Changes local only.", "info");
     return false;
   }
   if (!isAdmin) {
@@ -171,10 +187,10 @@ async function saveMatches() {
   }
   try {
     const body = {
-      matches,
+      pairings,
       meta: {
         lastUpdated: new Date().toISOString(),
-        version: (matches.length || 0) + 1
+        version: Date.now()
       }
     };
     const res = await fetch(`${JSONBIN_BASE}/${JSONBIN_BIN_ID}`, {
@@ -196,92 +212,44 @@ async function saveMatches() {
   }
 }
 
-// Merge: start from generated schedule, overlay results from bin by white+black+round or id
-function buildSchedule() {
+// Merge generated + saved results (works for any N, even or odd)
+function ensurePairings() {
   const playerIds = players.map(p => p.id);
-  const generated = generateDoubleRoundRobin(playerIds);
+  const generated = generateAllPairings(playerIds);
 
-  // Index existing matches for quick lookup (by round + white + black)
-  const key = (m) => `${m.round}|${m.white}|${m.black}`;
-  const existing = {};
-  matches.forEach(m => {
-    existing[key(m)] = m;
+  const savedMap = {};
+  pairings.forEach(p => {
+    const key = pairKey(p.playerA || p.white || "", p.playerB || p.black || "");
+    if (key.includes("|")) savedMap[key] = p;
   });
 
-  schedule = generated.map(g => {
-    const found = existing[key(g)];
-    if (found) {
-      return { ...g, id: found.id || g.id, result: found.result, playedDate: found.playedDate };
+  const newPairings = generated.map(g => {
+    const key = pairKey(g.playerA, g.playerB);
+    const saved = savedMap[key];
+    if (saved && saved.games && Array.isArray(saved.games)) {
+      const games = [
+        { white: g.playerA, black: g.playerB, result: null, playedDate: null },
+        { white: g.playerB, black: g.playerA, result: null, playedDate: null }
+      ];
+      saved.games.forEach(sg => {
+        const idx = games.findIndex(x => x.white === sg.white && x.black === sg.black);
+        if (idx >= 0) {
+          games[idx].result = sg.result || null;
+          games[idx].playedDate = sg.playedDate || null;
+        }
+      });
+      return {
+        id: saved.id || g.id,
+        playerA: g.playerA,
+        playerB: g.playerB,
+        games
+      };
     }
     return g;
   });
 
-  // Also keep any extra matches that might exist (shouldn't)
-  return schedule;
-}
-
-// ---------- Standings ----------
-function computeStandings() {
-  const ordered = [...schedule]
-    .filter(m => m.result)
-    .sort((a, b) => a.round - b.round || a.board - b.board);
-
-  const elos = computeElo({}, ordered);
-
-  const stats = {};
-  players.forEach(p => {
-    stats[p.id] = {
-      id: p.id,
-      name: p.name,
-      games: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      score: 0,
-      elo: elos[p.id] || settings.initialElo,
-      delta: (elos[p.id] || settings.initialElo) - settings.initialElo,
-      opponents: [],
-      buchholz: 0
-    };
-  });
-
-  schedule.forEach(m => {
-    if (!m.result) return;
-    const w = stats[m.white];
-    const b = stats[m.black];
-    if (!w || !b) return;
-    w.games++; b.games++;
-    w.opponents.push(m.black);
-    b.opponents.push(m.white);
-
-    if (m.result === "1-0") {
-      w.wins++; w.score += 1;
-      b.losses++;
-    } else if (m.result === "0-1") {
-      b.wins++; b.score += 1;
-      w.losses++;
-    } else {
-      w.draws++; b.draws++;
-      w.score += 0.5; b.score += 0.5;
-    }
-  });
-
-  // Simple Buchholz (sum of opponents' scores)
-  Object.values(stats).forEach(s => {
-    s.buchholz = s.opponents.reduce((sum, oid) => sum + (stats[oid]?.score || 0), 0);
-  });
-
-  let list = Object.values(stats);
-  list.sort((a, b) => {
-    if (sortCol === "score") return (b.score - a.score) || (b.buchholz - a.buchholz) || (b.elo - a.elo);
-    if (sortCol === "elo") return b.elo - a.elo;
-    if (sortCol === "games") return b.games - a.games;
-    if (sortCol === "name") return a.name.localeCompare(b.name);
-    return b.score - a.score;
-  });
-  if (sortDir === 1) list.reverse();
-
-  return list;
+  pairings = newPairings;
+  return pairings;
 }
 
 // ---------- Rendering ----------
@@ -291,23 +259,52 @@ function showStatus(msg, type = "info") {
   el.textContent = msg;
   el.className = `status ${type}`;
   el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden"), 4000);
+  clearTimeout(showStatus._t);
+  showStatus._t = setTimeout(() => el.classList.add("hidden"), 4500);
 }
 
 function renderHeader() {
-  const played = schedule.filter(m => m.result).length;
-  const total = schedule.length;
-  const pct = total ? Math.round((played / total) * 100) : 0;
-  $("#tournament-title").textContent = settings.tournamentName || "Double Round Robin";
-  $("#progress-text").textContent = `${played} / ${total} games (${pct}%)`;
+  const totalPossibleGames = pairings.length * 2;
+  let played = 0;
+  pairings.forEach(p => p.games.forEach(g => { if (g.result) played++; }));
+  const pct = totalPossibleGames ? Math.round((played / totalPossibleGames) * 100) : 0;
+
+  $("#tournament-title").textContent = settings.tournamentName || "Match Round Robin";
+  $("#progress-text").textContent = `${played} / ${totalPossibleGames} games (${pct}%)`;
   $("#progress-fill").style.width = pct + "%";
   $("#time-control").textContent = settings.timeControl || "10+10";
   $("#k-factor").textContent = "K=" + (settings.kFactor || 32);
+  const pc = $("#player-count");
+  if (pc) pc.textContent = players.length + " players";
+}
+
+function getSortedStandings() {
+  const { stats } = computeEloAndStats();
+  let list = Object.values(stats);
+
+  list.sort((a, b) => {
+    if (sortCol === "score") return (b.score - a.score) || (b.buchholz - a.buchholz) || (b.elo - a.elo);
+    if (sortCol === "elo") return b.elo - a.elo;
+    if (sortCol === "games") return b.games - a.games;
+    if (sortCol === "name") return a.name.localeCompare(b.name);
+    return b.score - a.score;
+  });
+  if (sortDir === 1) list.reverse();
+  return list;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function renderStandings() {
-  const list = computeStandings();
+  const list = getSortedStandings();
   const tbody = $("#standings-body");
+  if (!tbody) return;
   tbody.innerHTML = "";
 
   list.forEach((s, i) => {
@@ -319,7 +316,7 @@ function renderStandings() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="rank ${rankClass}">${rank}</td>
-      <td>${s.name}</td>
+      <td>${escapeHtml(s.name)}</td>
       <td>${s.games}</td>
       <td class="score">${s.score.toFixed(1)}</td>
       <td>${s.wins}-${s.draws}-${s.losses}</td>
@@ -330,161 +327,268 @@ function renderStandings() {
     tbody.appendChild(tr);
   });
 
-  // Stats cards
   const top = list[0];
-  $("#stat-leader").textContent = top ? top.name : "–";
-  $("#stat-played").textContent = schedule.filter(m => m.result).length;
-  $("#stat-total").textContent = schedule.length;
+  const leaderEl = $("#stat-leader");
+  if (leaderEl) leaderEl.textContent = top ? top.name : "–";
+  let played = 0;
+  pairings.forEach(p => p.games.forEach(g => { if (g.result) played++; }));
+  const playedEl = $("#stat-played");
+  if (playedEl) playedEl.textContent = played;
+  const totalEl = $("#stat-total");
+  if (totalEl) totalEl.textContent = pairings.length * 2;
   const avgElo = list.length ? Math.round(list.reduce((a, b) => a + b.elo, 0) / list.length) : 1200;
-  $("#stat-avg-elo").textContent = avgElo;
+  const avgEl = $("#stat-avg-elo");
+  if (avgEl) avgEl.textContent = avgElo;
 }
 
-function renderSchedule() {
-  const container = $("#schedule-container");
+function getName(id) {
+  return players.find(p => p.id === id)?.name || id;
+}
+
+function renderPairingsList() {
+  const container = $("#pairings-container");
+  if (!container) return;
   container.innerHTML = "";
 
-  const byRound = {};
-  schedule.forEach(m => {
-    if (!byRound[m.round]) byRound[m.round] = [];
-    byRound[m.round].push(m);
+  const sorted = [...pairings].sort((a, b) => {
+    const aDone = a.games.filter(g => g.result).length;
+    const bDone = b.games.filter(g => g.result).length;
+    if (aDone !== bDone) return aDone - bDone; // incomplete first
+    return (getName(a.playerA) + getName(a.playerB)).localeCompare(getName(b.playerA) + getName(b.playerB));
   });
 
-  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+  sorted.forEach(p => {
+    const aName = getName(p.playerA);
+    const bName = getName(p.playerB);
+    const done = p.games.filter(g => g.result).length;
+    const statusText = done === 2 ? "Complete" : done === 1 ? "1/2 games" : "Not started";
+    const statusClass = done === 2 ? "complete" : done === 1 ? "partial" : "pending";
 
-  rounds.forEach(r => {
-    const games = byRound[r].sort((a, b) => a.board - b.board);
-    const played = games.filter(g => g.result).length;
-    const section = document.createElement("div");
-    section.className = "round-section card";
-    section.innerHTML = `
-      <div class="round-header">
-        <div class="round-title">Round ${r} ${r > 7 ? "(Cycle 2)" : "(Cycle 1)"}</div>
-        <div class="round-status">${played}/${games.length} completed</div>
+    const card = document.createElement("div");
+    card.className = "card pairing-card";
+    card.innerHTML = `
+      <div class="pairing-header">
+        <div class="pairing-names">${escapeHtml(aName)} <span class="vs">vs</span> ${escapeHtml(bName)}</div>
+        <span class="pairing-status ${statusClass}">${statusText}</span>
+      </div>
+      <div class="games-list">
+        ${p.games.map((g, idx) => {
+          const wName = getName(g.white);
+          const bName2 = getName(g.black);
+          let badgeClass = "result-null";
+          let badgeText = "–";
+          if (g.result === "1-0") { badgeClass = "result-1-0"; badgeText = "1-0"; }
+          else if (g.result === "0-1") { badgeClass = "result-0-1"; badgeText = "0-1"; }
+          else if (g.result === "1/2-1/2") { badgeClass = "result-1-2"; badgeText = "½-½"; }
+
+          return `
+            <div class="game-row" data-pairing-id="${p.id}" data-game-idx="${idx}">
+              <span class="player-name player-white">${escapeHtml(wName)}</span>
+              <span class="vs">vs</span>
+              <span class="player-name player-black">${escapeHtml(bName2)}</span>
+              <span class="result-badge ${badgeClass}">${badgeText}</span>
+            </div>
+          `;
+        }).join("")}
       </div>
     `;
-    games.forEach(g => {
-      const wName = players.find(p => p.id === g.white)?.name || g.white;
-      const bName = players.find(p => p.id === g.black)?.name || g.black;
-      let badgeClass = "result-null";
-      let badgeText = "–";
-      if (g.result === "1-0") { badgeClass = "result-1-0"; badgeText = "1-0"; }
-      else if (g.result === "0-1") { badgeClass = "result-0-1"; badgeText = "0-1"; }
-      else if (g.result === "1/2-1/2") { badgeClass = "result-1-2"; badgeText = "½-½"; }
-
-      const row = document.createElement("div");
-      row.className = "game-row";
-      row.dataset.id = g.id;
-      row.innerHTML = `
-        <span class="board-num">#${g.board}</span>
-        <span class="player-name player-white">${wName}</span>
-        <span class="vs">vs</span>
-        <span class="player-name player-black">${bName}</span>
-        <span class="result-badge ${badgeClass}">${badgeText}</span>
-      `;
-      row.addEventListener("click", () => openResultModal(g));
-      section.appendChild(row);
+    card.querySelectorAll(".game-row").forEach(row => {
+      row.addEventListener("click", () => {
+        openResultModal(row.dataset.pairingId, Number(row.dataset.gameIdx));
+      });
     });
-    container.appendChild(section);
+    container.appendChild(card);
   });
 }
 
 function renderEnterForm() {
-  const roundSelect = $("#enter-round");
-  const gameSelect = $("#enter-game");
-  roundSelect.innerHTML = "";
-  const rounds = [...new Set(schedule.map(m => m.round))].sort((a, b) => a - b);
-  rounds.forEach(r => {
-    const opt = document.createElement("option");
-    opt.value = r;
-    opt.textContent = `Round ${r}`;
-    roundSelect.appendChild(opt);
+  const sel1 = $("#enter-p1");
+  const sel2 = $("#enter-p2");
+  if (!sel1 || !sel2) return;
+  sel1.innerHTML = "";
+  sel2.innerHTML = "";
+
+  players.forEach(p => {
+    const o1 = document.createElement("option");
+    o1.value = p.id; o1.textContent = p.name;
+    sel1.appendChild(o1);
+    const o2 = document.createElement("option");
+    o2.value = p.id; o2.textContent = p.name;
+    sel2.appendChild(o2);
   });
 
-  function populateGames() {
-    const r = Number(roundSelect.value);
-    gameSelect.innerHTML = "";
-    schedule.filter(m => m.round === r).sort((a, b) => a.board - b.board).forEach(g => {
-      const w = players.find(p => p.id === g.white)?.name || g.white;
-      const b = players.find(p => p.id === g.black)?.name || g.black;
-      const opt = document.createElement("option");
-      opt.value = g.id;
-      opt.textContent = `#${g.board}: ${w} vs ${b}` + (g.result ? ` [${g.result}]` : "");
-      gameSelect.appendChild(opt);
-    });
+  if (players.length > 1) {
+    sel1.value = players[0].id;
+    sel2.value = players[1].id;
   }
-  roundSelect.onchange = populateGames;
-  populateGames();
+
+  updateEnterPreview();
+  sel1.onchange = updateEnterPreview;
+  sel2.onchange = updateEnterPreview;
 }
 
-function openResultModal(game) {
+function updateEnterPreview() {
+  const p1 = $("#enter-p1")?.value;
+  const p2 = $("#enter-p2")?.value;
+  const preview = $("#enter-preview");
+  const saveBtn = $("#enter-save");
+  if (!preview || !saveBtn) return;
+
+  if (!p1 || !p2 || p1 === p2) {
+    preview.innerHTML = `<p class="hint">Select two different players.</p>`;
+    saveBtn.disabled = true;
+    return;
+  }
+
+  let pairing = pairings.find(p => pairKey(p.playerA, p.playerB) === pairKey(p1, p2));
+  if (!pairing) {
+    pairing = {
+      id: uid(),
+      playerA: p1,
+      playerB: p2,
+      games: [
+        { white: p1, black: p2, result: null, playedDate: null },
+        { white: p2, black: p1, result: null, playedDate: null }
+      ]
+    };
+  }
+
+  const g1 = pairing.games.find(g => g.white === p1 && g.black === p2) || { result: null };
+  const g2 = pairing.games.find(g => g.white === p2 && g.black === p1) || { result: null };
+
+  preview.innerHTML = `
+    <div class="enter-games">
+      <div class="form-group">
+        <label><strong>${escapeHtml(getName(p1))}</strong> (White) vs <strong>${escapeHtml(getName(p2))}</strong> (Black)</label>
+        <select id="result-g1">
+          <option value="">— Not played —</option>
+          <option value="1-0" ${g1.result === "1-0" ? "selected" : ""}>1-0 (White wins)</option>
+          <option value="0-1" ${g1.result === "0-1" ? "selected" : ""}>0-1 (Black wins)</option>
+          <option value="1/2-1/2" ${g1.result === "1/2-1/2" ? "selected" : ""}>½-½ (Draw)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label><strong>${escapeHtml(getName(p2))}</strong> (White) vs <strong>${escapeHtml(getName(p1))}</strong> (Black)</label>
+        <select id="result-g2">
+          <option value="">— Not played —</option>
+          <option value="1-0" ${g2.result === "1-0" ? "selected" : ""}>1-0 (White wins)</option>
+          <option value="0-1" ${g2.result === "0-1" ? "selected" : ""}>0-1 (Black wins)</option>
+          <option value="1/2-1/2" ${g2.result === "1/2-1/2" ? "selected" : ""}>½-½ (Draw)</option>
+        </select>
+      </div>
+    </div>
+  `;
+  saveBtn.disabled = false;
+  saveBtn.dataset.p1 = p1;
+  saveBtn.dataset.p2 = p2;
+}
+
+async function saveEnterForm() {
+  const btn = $("#enter-save");
+  const p1 = btn?.dataset.p1;
+  const p2 = btn?.dataset.p2;
+  if (!p1 || !p2) return;
+
+  let pairing = pairings.find(p => pairKey(p.playerA, p.playerB) === pairKey(p1, p2));
+  if (!pairing) {
+    pairing = {
+      id: uid(),
+      playerA: p1,
+      playerB: p2,
+      games: [
+        { white: p1, black: p2, result: null, playedDate: null },
+        { white: p2, black: p1, result: null, playedDate: null }
+      ]
+    };
+    pairings.push(pairing);
+  }
+
+  // Make sure both game directions exist
+  let g1 = pairing.games.find(g => g.white === p1 && g.black === p2);
+  let g2 = pairing.games.find(g => g.white === p2 && g.black === p1);
+  if (!g1) {
+    g1 = { white: p1, black: p2, result: null, playedDate: null };
+    pairing.games.push(g1);
+  }
+  if (!g2) {
+    g2 = { white: p2, black: p1, result: null, playedDate: null };
+    pairing.games.push(g2);
+  }
+
+  const r1 = $("#result-g1")?.value || null;
+  const r2 = $("#result-g2")?.value || null;
+
+  g1.result = r1 === "" ? null : r1;
+  g1.playedDate = g1.result ? new Date().toISOString().slice(0, 10) : null;
+  g2.result = r2 === "" ? null : r2;
+  g2.playedDate = g2.result ? new Date().toISOString().slice(0, 10) : null;
+
+  // Keep only the two games
+  pairing.games = [g1, g2];
+
+  renderAll();
+  await savePairings();
+}
+
+// Modal (single game)
+function openResultModal(pairingId, gameIdx) {
+  const pairing = pairings.find(p => p.id === pairingId);
+  if (!pairing) return;
+  const game = pairing.games[gameIdx];
+  if (!game) return;
+
   const modal = $("#result-modal");
-  const wName = players.find(p => p.id === game.white)?.name || game.white;
-  const bName = players.find(p => p.id === game.black)?.name || game.black;
-  $("#modal-title").textContent = `Round ${game.round} · Board ${game.board}`;
-  $("#modal-players").textContent = `${wName} (White) vs ${bName} (Black)`;
+  $("#modal-title").textContent = "Edit Game Result";
+  $("#modal-players").textContent = `${getName(game.white)} (White) vs ${getName(game.black)} (Black)`;
   $("#modal-result").value = game.result || "";
-  modal.dataset.gameId = game.id;
+  modal.dataset.pairingId = pairingId;
+  modal.dataset.gameIdx = gameIdx;
   modal.classList.remove("hidden");
 }
 
 function closeModal() {
-  $("#result-modal").classList.add("hidden");
+  $("#result-modal")?.classList.add("hidden");
 }
 
 async function saveResultFromModal() {
-  const id = $("#result-modal").dataset.gameId;
+  const pairingId = $("#result-modal").dataset.pairingId;
+  const gameIdx = Number($("#result-modal").dataset.gameIdx);
   const result = $("#modal-result").value || null;
-  const game = schedule.find(m => m.id === id);
-  if (!game) return;
 
-  game.result = result === "" ? null : result;
-  game.playedDate = result ? new Date().toISOString().slice(0, 10) : null;
+  const pairing = pairings.find(p => p.id === pairingId);
+  if (!pairing || !pairing.games[gameIdx]) return;
 
-  // Update matches array (source of truth for bin)
-  const idx = matches.findIndex(m => m.round === game.round && m.white === game.white && m.black === game.black);
-  if (idx >= 0) {
-    if (result) {
-      matches[idx] = { ...matches[idx], result, playedDate: game.playedDate };
-    } else {
-      matches.splice(idx, 1);
-    }
-  } else if (result) {
-    matches.push({
-      id: game.id,
-      white: game.white,
-      black: game.black,
-      round: game.round,
-      board: game.board,
-      result,
-      playedDate: game.playedDate
-    });
-  }
+  pairing.games[gameIdx].result = result === "" ? null : result;
+  pairing.games[gameIdx].playedDate = result ? new Date().toISOString().slice(0, 10) : null;
 
   closeModal();
   renderAll();
-  await saveMatches();
+  await savePairings();
 }
 
-// ---------- Tabs ----------
+// ---------- Tabs & Admin ----------
 function switchTab(tab) {
   currentTab = tab;
   $$(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   $$(".tab-content").forEach(c => c.classList.add("hidden"));
-  $(`#tab-${tab}`).classList.remove("hidden");
+  const el = $(`#tab-${tab}`);
+  if (el) el.classList.remove("hidden");
 
   if (tab === "standings") renderStandings();
-  if (tab === "schedule") renderSchedule();
+  if (tab === "pairings") renderPairingsList();
   if (tab === "enter") renderEnterForm();
 }
 
-// ---------- Admin ----------
 function tryLogin() {
   const pw = prompt("Enter admin password to enable saving results:");
   if (pw === ADMIN_PASSWORD) {
     isAdmin = true;
     showStatus("Admin mode enabled. You can now save results.", "ok");
-    $("#admin-status").textContent = "Admin ✓";
-    $("#admin-status").style.color = "var(--accent)";
+    const st = $("#admin-status");
+    if (st) {
+      st.textContent = "Admin ✓";
+      st.style.color = "var(--accent)";
+    }
   } else if (pw !== null) {
     showStatus("Wrong password", "err");
   }
@@ -492,28 +596,24 @@ function tryLogin() {
 
 // ---------- Init ----------
 async function init() {
-  $("#loading").classList.remove("hidden");
+  $("#loading")?.classList.remove("hidden");
   try {
     await loadLocalData();
-    await loadMatches();
-    buildSchedule();
+    await loadPairings();
+    ensurePairings();
     renderHeader();
     renderStandings();
     switchTab("standings");
 
-    // Event listeners
     $$(".tab-btn").forEach(btn => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
 
-    $("#login-btn").addEventListener("click", tryLogin);
-    $("#modal-save").addEventListener("click", saveResultFromModal);
-    $("#modal-cancel").addEventListener("click", closeModal);
-    $("#modal-clear").addEventListener("click", () => {
-      $("#modal-result").value = "";
-    });
+    $("#login-btn")?.addEventListener("click", tryLogin);
+    $("#modal-save")?.addEventListener("click", saveResultFromModal);
+    $("#modal-cancel")?.addEventListener("click", closeModal);
+    $("#modal-clear")?.addEventListener("click", () => { $("#modal-result").value = ""; });
 
-    // Sort headers
     $$("#standings-table th[data-sort]").forEach(th => {
       th.addEventListener("click", () => {
         const col = th.dataset.sort;
@@ -523,42 +623,21 @@ async function init() {
       });
     });
 
-    // Enter form save
-    $("#enter-save").addEventListener("click", async () => {
-      const id = $("#enter-game").value;
-      const result = $("#enter-result").value || null;
-      const game = schedule.find(m => m.id === id);
-      if (!game) return;
-      game.result = result === "" ? null : result;
-      game.playedDate = result ? new Date().toISOString().slice(0, 10) : null;
-
-      const idx = matches.findIndex(m => m.round === game.round && m.white === game.white && m.black === game.black);
-      if (idx >= 0) {
-        if (result) matches[idx] = { ...matches[idx], result, playedDate: game.playedDate };
-        else matches.splice(idx, 1);
-      } else if (result) {
-        matches.push({
-          id: game.id, white: game.white, black: game.black,
-          round: game.round, board: game.board, result, playedDate: game.playedDate
-        });
-      }
-      renderAll();
-      await saveMatches();
-    });
+    $("#enter-save")?.addEventListener("click", saveEnterForm);
 
   } catch (e) {
     console.error(e);
     showStatus("Init error: " + e.message, "err");
   } finally {
-    $("#loading").classList.add("hidden");
-    $("#app").classList.remove("hidden");
+    $("#loading")?.classList.add("hidden");
+    $("#app")?.classList.remove("hidden");
   }
 }
 
 function renderAll() {
   renderHeader();
   if (currentTab === "standings") renderStandings();
-  if (currentTab === "schedule") renderSchedule();
+  if (currentTab === "pairings") renderPairingsList();
   if (currentTab === "enter") renderEnterForm();
 }
 
