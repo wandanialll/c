@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chess Double Round Robin Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div>
+        <h1>♟️ <span id="tournament-title">Double Round Robin</span></h1>
+        <div class="subtitle">
+          <span id="time-control">10+10</span> · 
+          <span id="k-factor">K=32</span> · 
+          Relative Elo (start 1200)
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+        <div>
+          <div class="progress-text" id="progress-text">0 / 0 games</div>
+          <div class="progress-bar" style="margin-top:4px;">
+            <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+          </div>
+        </div>
+        <button class="btn-secondary" id="login-btn">Admin Login</button>
+        <span id="admin-status" style="font-size:0.85rem;color:var(--muted);">Guest</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="loading" class="loading">Loading tournament data…</div>
+
+    <div id="app" class="hidden">
+      <nav>
+        <button class="tab-btn active" data-tab="standings">Standings</button>
+        <button class="tab-btn" data-tab="schedule">Schedule</button>
+        <button class="tab-btn" data-tab="enter">Enter Result</button>
+      </nav>
+
+      <div id="status" class="status hidden"></div>
+
+      <!-- STANDINGS TAB -->
+      <div id="tab-standings" class="tab-content">
+        <div class="stats-grid" style="margin-top:1.5rem;">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-leader">–</div>
+            <div class="stat-label">Leader</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-played">0</div>
+            <div class="stat-label">Games Played</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-total">0</div>
+            <div class="stat-label">Total Games</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-avg-elo">1200</div>
+            <div class="stat-label">Avg Elo</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>🏆 Standings</h2>
+          <div style="overflow-x:auto;">
+            <table id="standings-table">
+              <thead>
+                <tr>
+                  <th data-sort="score">#</th>
+                  <th data-sort="name">Player</th>
+                  <th data-sort="games">G</th>
+                  <th data-sort="score">Score</th>
+                  <th>W-D-L</th>
+                  <th data-sort="elo">Elo</th>
+                  <th>ΔElo</th>
+                  <th>Buchholz</th>
+                </tr>
+              </thead>
+              <tbody id="standings-body"></tbody>
+            </table>
+          </div>
+          <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);">
+            Click column headers to sort. Elo is tournament-relative (starts at 1200, K=32). Buchholz = sum of opponents' scores.
+          </p>
+        </div>
+      </div>
+
+      <!-- SCHEDULE TAB -->
+      <div id="tab-schedule" class="tab-content hidden">
+        <div style="margin:1.5rem 0 0.5rem;font-size:0.9rem;color:var(--muted);">
+          Click any game to enter or edit the result. Full double round-robin (14 rounds for 8 players).
+        </div>
+        <div id="schedule-container"></div>
+      </div>
+
+      <!-- ENTER RESULT TAB -->
+      <div id="tab-enter" class="tab-content hidden">
+        <div class="card" style="margin-top:1.5rem;max-width:480px;">
+          <h2>✏️ Enter / Edit Result</h2>
+          <div class="form-group">
+            <label for="enter-round">Round</label>
+            <select id="enter-round"></select>
+          </div>
+          <div class="form-group">
+            <label for="enter-game">Game</label>
+            <select id="enter-game"></select>
+          </div>
+          <div class="form-group">
+            <label for="enter-result">Result</label>
+            <select id="enter-result">
+              <option value="">— Clear / Not played —</option>
+              <option value="1-0">1-0 (White wins)</option>
+              <option value="0-1">0-1 (Black wins)</option>
+              <option value="1/2-1/2">½-½ (Draw)</option>
+            </select>
+          </div>
+          <button class="primary" id="enter-save">Save Result</button>
+          <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);">
+            You must be logged in as Admin to save to jsonbin. Local preview works without login.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result Modal -->
+  <div id="result-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="modal-title">Enter Result</h3>
+      <p id="modal-players" style="margin-bottom:1rem;color:var(--muted);"></p>
+      <div class="form-group">
+        <label for="modal-result">Result</label>
+        <select id="modal-result">
+          <option value="">— Clear / Not played —</option>
+          <option value="1-0">1-0 (White wins)</option>
+          <option value="0-1">0-1 (Black wins)</option>
+          <option value="1/2-1/2">½-½ (Draw)</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="modal-clear">Clear</button>
+        <button class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button class="primary" id="modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    Static chess tournament tracker · Double Round-Robin · Powered by jsonbin.io · Hosted on GitHub Pages
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
