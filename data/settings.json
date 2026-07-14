@@ -1,8 +1,9 @@
 {
-  "tournamentName": "10+10 Double Round Robin 2026",
+  "tournamentName": "ces",
   "kFactor": 32,
-  "cycles": 2,
   "initialElo": 1200,
   "timeControl": "10+10",
+  "gamesPerMatch": 2,
+  "description": "afiq play chess",
   "created": "2026-07-14"
 }
