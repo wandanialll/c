@@ -1,6 +1,6 @@
 // ===================== CONFIG =====================
 // Replace these with your jsonbin.io values
-const JSONBIN_BIN_ID = "6a561a0cf5f4af5e298d030b ";          // e.g. "66a1b2c3d4e5f6789012345"
+const JSONBIN_BIN_ID = "6a561a0cf5f4af5e298d030b";          // e.g. "66a1b2c3d4e5f6789012345"
 const JSONBIN_ACCESS_KEY = "$2a$10$hJpj7P4R4ZhgWxDdP3x76ubEg99upVUxanYYNmKKRtNKdmrWmyJbe";  // X-Access-Key with Read + Update
 const JSONBIN_BASE = "https://api.jsonbin.io/v3/b";
 
