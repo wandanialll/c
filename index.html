@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chess Double Round Robin Tracker</title>
+  <title>Chess Match Round Robin Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
@@ -12,10 +12,11 @@
   <header>
     <div class="header-inner">
       <div>
-        <h1>♟️ <span id="tournament-title">Double Round Robin</span></h1>
+        <h1>♟️ <span id="tournament-title">Match Round Robin</span></h1>
         <div class="subtitle">
           <span id="time-control">10+10</span> · 
           <span id="k-factor">K=32</span> · 
+          <span id="player-count">8 players</span> · 
           Relative Elo (start 1200)
         </div>
       </div>
@@ -38,8 +39,8 @@
     <div id="app" class="hidden">
       <nav>
         <button class="tab-btn active" data-tab="standings">Standings</button>
-        <button class="tab-btn" data-tab="schedule">Schedule</button>
-        <button class="tab-btn" data-tab="enter">Enter Result</button>
+        <button class="tab-btn" data-tab="pairings">All Matches</button>
+        <button class="tab-btn" data-tab="enter">Enter Results</button>
       </nav>
 
       <div id="status" class="status hidden"></div>
@@ -73,7 +74,7 @@
                 <tr>
                   <th data-sort="score">#</th>
                   <th data-sort="name">Player</th>
-                  <th data-sort="games">G</th>
+                  <th data-sort="games">Games</th>
                   <th data-sort="score">Score</th>
                   <th>W-D-L</th>
                   <th data-sort="elo">Elo</th>
@@ -85,53 +86,53 @@
             </table>
           </div>
           <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);">
-            Click column headers to sort. Elo is tournament-relative (starts at 1200, K=32). Buchholz = sum of opponents' scores.
+            Click headers to sort. Each opponent is played twice (once each color) → max 2 pts per opponent.
+            Elo is tournament-relative (starts 1200, K=32). Buchholz = sum of opponents' scores.
           </p>
         </div>
       </div>
 
-      <!-- SCHEDULE TAB -->
-      <div id="tab-schedule" class="tab-content hidden">
+      <!-- PAIRINGS / ALL MATCHES TAB -->
+      <div id="tab-pairings" class="tab-content hidden">
         <div style="margin:1.5rem 0 0.5rem;font-size:0.9rem;color:var(--muted);">
-          Click any game to enter or edit the result. Full double round-robin (14 rounds for 8 players).
+          All unique pairings. Each match has <strong>two games</strong> (colors swapped). Click a game to edit its result. Incomplete matches shown first.
         </div>
-        <div id="schedule-container"></div>
+        <div id="pairings-container"></div>
       </div>
 
       <!-- ENTER RESULT TAB -->
       <div id="tab-enter" class="tab-content hidden">
-        <div class="card" style="margin-top:1.5rem;max-width:480px;">
-          <h2>✏️ Enter / Edit Result</h2>
+        <div class="card" style="margin-top:1.5rem;max-width:520px;">
+          <h2>✏️ Enter / Update Results for a Match</h2>
+          <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">
+            Select two players. You will set the result for <strong>both games</strong> of their match (one with each color).
+          </p>
           <div class="form-group">
-            <label for="enter-round">Round</label>
-            <select id="enter-round"></select>
+            <label for="enter-p1">Player 1</label>
+            <select id="enter-p1"></select>
           </div>
           <div class="form-group">
-            <label for="enter-game">Game</label>
-            <select id="enter-game"></select>
+            <label for="enter-p2">Player 2</label>
+            <select id="enter-p2"></select>
           </div>
-          <div class="form-group">
-            <label for="enter-result">Result</label>
-            <select id="enter-result">
-              <option value="">— Clear / Not played —</option>
-              <option value="1-0">1-0 (White wins)</option>
-              <option value="0-1">0-1 (Black wins)</option>
-              <option value="1/2-1/2">½-½ (Draw)</option>
-            </select>
+
+          <div id="enter-preview">
+            <p class="hint">Select two different players.</p>
           </div>
-          <button class="primary" id="enter-save">Save Result</button>
+
+          <button class="primary" id="enter-save" disabled>Save Both Results</button>
           <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);">
-            You must be logged in as Admin to save to jsonbin. Local preview works without login.
+            Admin login required to persist to jsonbin. You can preview changes without login.
           </p>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Result Modal -->
+  <!-- Result Modal (single game) -->
   <div id="result-modal" class="modal-overlay hidden">
     <div class="modal">
-      <h3 id="modal-title">Enter Result</h3>
+      <h3 id="modal-title">Edit Game Result</h3>
       <p id="modal-players" style="margin-bottom:1rem;color:var(--muted);"></p>
       <div class="form-group">
         <label for="modal-result">Result</label>
@@ -151,7 +152,7 @@
   </div>
 
   <footer class="footer">
-    Static chess tournament tracker · Double Round-Robin · Powered by jsonbin.io · Hosted on GitHub Pages
+    Static chess tracker · Single RR with 2 games per match (colors swapped) · Handles odd/even players · jsonbin.io + GitHub Pages
   </footer>
 
   <script src="app.js"></script>
