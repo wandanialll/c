@@ -357,6 +357,20 @@ function renderPairingsList() {
     return (getName(a.playerA) + getName(a.playerB)).localeCompare(getName(b.playerA) + getName(b.playerB));
   });
 
+function renderPairingsList() {
+  const container = $("#pairings-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const { elos } = computeEloAndStats();   // calculate once
+
+  const sorted = [...pairings].sort((a, b) => {
+    const aDone = a.games.filter(g => g.result).length;
+    const bDone = b.games.filter(g => g.result).length;
+    if (aDone !== bDone) return aDone - bDone; // incomplete first
+    return (getName(a.playerA) + getName(a.playerB)).localeCompare(getName(b.playerA) + getName(b.playerB));
+  });
+
   sorted.forEach(p => {
     const aName = getName(p.playerA);
     const bName = getName(p.playerB);
@@ -364,11 +378,25 @@ function renderPairingsList() {
     const statusText = done === 2 ? "Complete" : done === 1 ? "1/2 games" : "Not started";
     const statusClass = done === 2 ? "complete" : done === 1 ? "partial" : "pending";
 
+    // Overall edge (shown for Not started + 1/2 games)
+    let probText = "";
+    if (done < 2) {
+      const eloA = elos[p.playerA] ?? 1200;
+      const eloB = elos[p.playerB] ?? 1200;
+      const e = expectedScore(eloA, eloB);
+      const pctA = Math.round(e * 100);
+      const pctB = 100 - pctA;
+      probText = `<span class="pairing-prob">${pctA}–${pctB}</span>`;
+    }
+
     const card = document.createElement("div");
     card.className = "card pairing-card";
     card.innerHTML = `
       <div class="pairing-header">
-        <div class="pairing-names">${escapeHtml(aName)} <span class="vs">vs</span> ${escapeHtml(bName)}</div>
+        <div class="pairing-names">
+          ${escapeHtml(aName)} <span class="vs">vs</span> ${escapeHtml(bName)}
+          ${probText}
+        </div>
         <span class="pairing-status ${statusClass}">${statusText}</span>
       </div>
       <div class="games-list">
