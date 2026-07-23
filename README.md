@@ -16,8 +16,6 @@ Static site for tracking a **double round-robin** chess tournament (everyone pla
 - Dark chess-themed UI, mobile-friendly
 - Progress bar & quick stats
 
-## Quick Start
-
 ### 1. Clone / download this folder
 Put it in a new GitHub repository.
 
