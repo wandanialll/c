@@ -350,18 +350,6 @@ function renderPairingsList() {
   if (!container) return;
   container.innerHTML = "";
 
-  const sorted = [...pairings].sort((a, b) => {
-    const aDone = a.games.filter(g => g.result).length;
-    const bDone = b.games.filter(g => g.result).length;
-    if (aDone !== bDone) return aDone - bDone; // incomplete first
-    return (getName(a.playerA) + getName(a.playerB)).localeCompare(getName(b.playerA) + getName(b.playerB));
-  });
-
-function renderPairingsList() {
-  const container = $("#pairings-container");
-  if (!container) return;
-  container.innerHTML = "";
-
   const { elos } = computeEloAndStats();   // calculate once
 
   const sorted = [...pairings].sort((a, b) => {
