@@ -509,3 +509,11 @@ button.primary:disabled {
   color: var(--text);
   margin-bottom: 0.4rem;
 }
+
+.pairing-prob {
+  margin-left: 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
